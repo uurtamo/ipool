@@ -12,17 +12,18 @@ import (
 )
 
 type Pool struct {
-	locations sync.Map
-	size      uint64
-	queue     *twoLockQueue
-	pmux      sync.Mutex
+	Value sync.Map
+	size  uint64
+	queue *twoLockQueue
+	pmux  sync.Mutex
 }
 
 type Interval struct {
-	begin     uint64
-	end       uint64
+	Begin     uint64
+	End       uint64
 	allocated bool
-	handle    uint64
+	Handle    uint64
+	Hook      uint64
 }
 
 type node struct {
@@ -96,17 +97,17 @@ func (iPool *Pool) Init() *Pool {
 
 	tmpInterval = new(Interval)
 	tmpInterval.allocated = false
-	tmpInterval.handle = 8 * newSize
-	Locations.Store(tmpInterval.handle, tmpInterval)
+	tmpInterval.Handle = 8 * newSize
+	Locations.Store(tmpInterval.Handle, tmpInterval)
 
 	iPool.queue.enqueue(tmpInterval)
-	iPool.locations = Locations
+	iPool.Value = Locations
 	iPool.pmux.Unlock()
 
 	return iPool
 }
 
-func (iPool *Pool) Alloc() *Interval {
+func (iPool *Pool) Alloc() (*Interval, uint64) {
 
 	var Item *Interval
 	var IntervalTmp *Interval
@@ -125,10 +126,10 @@ func (iPool *Pool) Alloc() *Interval {
 		newSize = atomic.AddUint64(&iPool.size, 1)
 		IntervalRet = new(Interval)
 		handleTmp = 8 * newSize
-		iPool.locations.Store(handleTmp, IntervalRet)
+		iPool.Value.Store(handleTmp, IntervalRet)
 		iPool.pmux.Unlock()
 
-		IntervalRet.handle = handleTmp
+		IntervalRet.Handle = handleTmp
 
 		startSize = atomic.LoadUint64(&iPool.size)
 
@@ -140,8 +141,8 @@ func (iPool *Pool) Alloc() *Interval {
 			IntervalTmp.allocated = false
 			newSize = atomic.AddUint64(&iPool.size, 1)
 			handleTmp = 8 * newSize
-			iPool.locations.Store(handleTmp, IntervalTmp)
-			IntervalTmp.handle = handleTmp
+			iPool.Value.Store(handleTmp, IntervalTmp)
+			IntervalTmp.Handle = handleTmp
 			iPool.queue.enqueue(IntervalTmp)
 		}
 
@@ -152,7 +153,7 @@ func (iPool *Pool) Alloc() *Interval {
 			os.Exit(13)
 		}
 		IntervalRet.allocated = true
-		return IntervalRet
+		return IntervalRet, IntervalRet.Handle
 	} else {
 		IntervalRet = Item
 		if IntervalRet.allocated == true {
@@ -160,7 +161,7 @@ func (iPool *Pool) Alloc() *Interval {
 			os.Exit(13)
 		}
 		IntervalRet.allocated = true
-		return IntervalRet
+		return IntervalRet, IntervalRet.Handle
 	}
 }
 
@@ -170,7 +171,7 @@ func (iPool *Pool) Free(PassedInterval *Interval) {
 
 	// clear the bottom 3 bits
 
-	handle = PassedInterval.handle
+	handle = PassedInterval.Handle
 	handle &^= 7
 
 	PassedInterval.allocated = false
@@ -185,7 +186,7 @@ func (iPool *Pool) FreeHandle(handle uint64) {
 
 	handle &^= 7
 
-	tmpVal, _ := iPool.locations.Load(handle)
+	tmpVal, _ := iPool.Value.Load(handle)
 	IntervalTmp = tmpVal.(*Interval)
 
 	if IntervalTmp == nil {
