@@ -11,15 +11,14 @@ import (
 	"sync/atomic"
 )
 
-type pool struct {
+type Pool struct {
 	locations sync.Map
-	//	locations map[uint64]*interval
-	size  uint64
-	queue *twoLockQueue
-	pmux  sync.Mutex
+	size      uint64
+	queue     *twoLockQueue
+	pmux      sync.Mutex
 }
 
-type interval struct {
+type Interval struct {
 	begin     uint64
 	end       uint64
 	allocated bool
@@ -27,7 +26,7 @@ type interval struct {
 }
 
 type node struct {
-	value *interval
+	value *Interval
 	next  *node
 }
 
@@ -47,7 +46,7 @@ func (Q *twoLockQueue) Init() *twoLockQueue {
 	return Q
 }
 
-func (Q *twoLockQueue) enqueue(item *interval) {
+func (Q *twoLockQueue) enqueue(item *Interval) {
 
 	t_node := new(node)
 	t_node.value = item
@@ -62,7 +61,7 @@ func (Q *twoLockQueue) enqueue(item *interval) {
 	return
 }
 
-func (Q *twoLockQueue) dequeue() *interval {
+func (Q *twoLockQueue) dequeue() *Interval {
 
 	// lock the queue
 
@@ -82,71 +81,71 @@ func (Q *twoLockQueue) dequeue() *interval {
 	return value
 }
 
-func (Pool *pool) Init() *pool {
+func (iPool *Pool) Init() *Pool {
 
 	var Queue = new(twoLockQueue)
 	var Locations sync.Map
-	var Interval *interval
+	var tmpInterval *Interval
 	var newSize uint64
 
 	Queue.Init()
-	Pool.queue = Queue
+	iPool.queue = Queue
 
-	Pool.pmux.Lock()
-	newSize = atomic.AddUint64(&Pool.size, 1)
+	iPool.pmux.Lock()
+	newSize = atomic.AddUint64(&iPool.size, 1)
 
-	Interval = new(interval)
-	Interval.allocated = false
-	Interval.handle = 8 * newSize
-	Locations.Store(Interval.handle, Interval)
+	tmpInterval = new(Interval)
+	tmpInterval.allocated = false
+	tmpInterval.handle = 8 * newSize
+	Locations.Store(tmpInterval.handle, tmpInterval)
 
-	Pool.queue.enqueue(Interval)
-	Pool.locations = Locations
-	Pool.pmux.Unlock()
+	iPool.queue.enqueue(tmpInterval)
+	iPool.locations = Locations
+	iPool.pmux.Unlock()
 
-	return Pool
+	return iPool
 }
 
-func (Pool *pool) Alloc() *interval {
+func (iPool *Pool) Alloc() *Interval {
 
-	var Item *interval
-	var IntervalTmp *interval
-	var IntervalRet *interval
+	var Item *Interval
+	var IntervalTmp *Interval
+	var IntervalRet *Interval
 	var handleTmp uint64
 	var counter uint64
 	var startSize uint64
 	var newSize uint64
 
-	Item = Pool.queue.dequeue()
+	Item = iPool.queue.dequeue()
 
 	if Item == nil {
 		// the queue is out of items to give
 
-		Pool.pmux.Lock()
-		newSize = atomic.AddUint64(&Pool.size, 1)
-		IntervalRet = new(interval)
+		iPool.pmux.Lock()
+		newSize = atomic.AddUint64(&iPool.size, 1)
+		IntervalRet = new(Interval)
 		handleTmp = 8 * newSize
-		Pool.locations.Store(handleTmp, IntervalRet)
-		Pool.pmux.Unlock()
+		iPool.locations.Store(handleTmp, IntervalRet)
+		iPool.pmux.Unlock()
 
 		IntervalRet.handle = handleTmp
 
-		startSize = atomic.LoadUint64(&Pool.size)
+		startSize = atomic.LoadUint64(&iPool.size)
 
-		Pool.pmux.Lock()
+		iPool.pmux.Lock()
 
 		for counter = 1; counter <= startSize; counter++ {
 
-			IntervalTmp = new(interval)
+			IntervalTmp = new(Interval)
 			IntervalTmp.allocated = false
-			newSize = atomic.AddUint64(&Pool.size, 1)
+			newSize = atomic.AddUint64(&iPool.size, 1)
 			handleTmp = 8 * newSize
-			Pool.locations.Store(handleTmp, IntervalTmp)
+			iPool.locations.Store(handleTmp, IntervalTmp)
 			IntervalTmp.handle = handleTmp
-			Pool.queue.enqueue(IntervalTmp)
+			iPool.queue.enqueue(IntervalTmp)
 		}
 
-		Pool.pmux.Unlock()
+		iPool.pmux.Unlock()
 
 		if IntervalRet.allocated == true {
 			fmt.Printf("this should never happen. reallocateed object %v\n", IntervalRet)
@@ -165,36 +164,34 @@ func (Pool *pool) Alloc() *interval {
 	}
 }
 
-func (Pool *pool) Free(Interval *interval) {
+func (iPool *Pool) Free(PassedInterval *Interval) {
 
 	var handle uint64
 
 	// clear the bottom 3 bits
 
-	handle = Interval.handle
+	handle = PassedInterval.handle
 	handle &^= 7
 
-	Interval.allocated = false
-	Pool.queue.enqueue(Interval)
+	PassedInterval.allocated = false
+	iPool.queue.enqueue(PassedInterval)
 }
 
-func (Pool *pool) FreeHandle(handle uint64) {
+func (iPool *Pool) FreeHandle(handle uint64) {
 
-	var IntervalTmp *interval
+	var IntervalTmp *Interval
 
 	// clear the bottom 3 bits
 
 	handle &^= 7
 
-	//	IntervalTmp = Pool.locations[handle]
-
-	tmpVal, _ := Pool.locations.Load(handle)
-	IntervalTmp = tmpVal.(*interval)
+	tmpVal, _ := iPool.locations.Load(handle)
+	IntervalTmp = tmpVal.(*Interval)
 
 	if IntervalTmp == nil {
-		fmt.Printf("this should never happen. Freed interval %v is not in the pool location map for pool %v\n", handle, Pool)
+		fmt.Printf("this should never happen. Freed interval %v is not in the pool location map for pool %v\n", handle, iPool)
 		os.Exit(13)
 	}
 	IntervalTmp.allocated = false
-	Pool.queue.enqueue(IntervalTmp)
+	iPool.queue.enqueue(IntervalTmp)
 }
